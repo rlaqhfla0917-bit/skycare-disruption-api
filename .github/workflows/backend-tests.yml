@@ -1,0 +1,20 @@
+name: SkyCare backend contract and failure tests
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  backend-tests:
+    runs-on: ubuntu-latest
+    env:
+      AUTO_INIT_DB: "false"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Install dependencies
+        run: python -m pip install -r requirements.txt
+      - name: Verify API and failure handling without live Redis or DB
+        run: python -m unittest discover -s tests -v
