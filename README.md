@@ -1,227 +1,75 @@
-# SkyCare Disruption API
-### 항공편 지연·결항 발생 시 고객이 대체편 조회부터 예약·환불까지 직접 처리할 수 있도록 설계한 Self-Service API
+# SkyCare · 항공 지연·결항 대응 API
 
-KT AIVLE School 프로젝트에서 항공편 지연·결항 상황의 고객 대응 과정을 하나의 서비스 흐름으로 구현한 프로젝트입니다.
+**FastAPI · PostgreSQL · Redis Queue**를 사용해 대체 항공편 조회, 예약 요청의 비동기 접수, 큐 상태 조회를 구현한 포트폴리오 프로젝트입니다.
 
-기존에는 고객이 항공편 지연·결항을 확인한 뒤 대체편을 찾고, 예약·취소·환불을 처리하기 위해 여러 단계와 채널을 거쳐야 한다는 문제에 주목했습니다.  
-SkyCare는 **예약 조회 → 대체편 추천 → 예약 → 환불/대기/도움 요청 → 처리 상태 확인**을 한 흐름에서 수행할 수 있도록 설계했습니다.
+KT AIVLE School에서 구상한 **지연·결항 확인 → 대체편 선택 → 예약/환불/대기 등 후속 조치**라는 셀프서비스 흐름 가운데, 공개 백엔드는 아래 범위를 구현합니다.
 
-> 핵심 목표:  
-> **고객의 지연·결항 확인부터 후속 처리 결과 확인까지 하나의 API 기반 서비스로 연결**
+> **구현 범위 안내:** 이 저장소의 API는 실제 항공사 예약·취소·환불 시스템과 연동되지 않습니다. Redis Queue에 요청을 **등록**하지만 Worker의 자동 처리·DLQ 자동 이관·실제 항공권 발권은 공개 코드에 구현되어 있지 않습니다. 웹 미리보기는 가상 데이터를 사용하는 별도 정적 데모입니다.
 
----
+## 1. 구현된 엔드포인트
 
-## 1. Problem
+| Method | Endpoint | 현재 코드 동작 |
+| --- | --- | --- |
+| GET | `/health` | 기본 상태값 `{"status":"ok"}` 반환. DB·Redis의 헬스체크는 아님 |
+| GET | `/alternatives` | PostgreSQL의 `alternative_flights` 조회. 조회 결과가 없거나 연결 실패 시 사전 정의된 모의 데이터 제공 |
+| POST | `/queue/reservations` | Pydantic 요청 검증 후 UUID 요청 ID를 만들고 Redis 리스트에 `LPUSH`. Redis 실패 시 HTTP 500 |
+| GET | `/queue/status` | Redis의 Queue·DLQ 이름과 `LLEN` 값 조회. 실패 시 HTTP 500 |
+| GET | `/reservations` | PostgreSQL `reservations` 테이블에서 최근 50건 조회. 연결 실패 시 HTTP 500 |
 
-항공편 지연·결항이 발생하면 고객은 단순히 상황을 확인하는 것에서 끝나지 않습니다.
+핵심 모듈: [`main.py`](main.py)
 
-```text
-지연·결항 확인
-   ↓
-대체편 탐색
-   ↓
-잔여 좌석 확인
-   ↓
-재예약
-   ↓
-취소·환불 또는 대기
-   ↓
-처리 상태 확인
+### 주요 요청 예시
+
+```json
+{
+  "flight_id": "LCC912",
+  "passenger_name": "홍길동",
+  "passenger_phone": "010-0000-0000",
+  "force_fail": false
+}
 ```
 
-이 과정이 여러 채널과 단계로 분리되면 고객은 같은 정보를 반복해서 확인해야 하고, 항공사 입장에서도 상담 요청이 집중될 수 있습니다.
+`POST /queue/reservations`의 정상 응답은 `status: queued`, 생성된 `request_id`, 접수 메시지입니다. 이는 **예약 완료가 아닌 대기열 접수**입니다.
 
-SkyCare는 이러한 후속 절차를 **Self-Service 형태로 연결하는 것**을 목표로 했습니다.
+## 2. 데이터·예외 처리
 
----
-
-## 2. 주요 기능
-
-| 기능 | 설명 |
-|---|---|
-| 예약 조회 | 예약번호 기반 현재 항공편 정보 확인 |
-| 대체편 조회 | 기존 항공편에 대응하는 대체편 및 잔여 좌석 조회 |
-| 대체편 예약 | 선택한 대체편 예약 요청 처리 |
-| 환불 요청 | 기존 항공권 환불 흐름 제공 |
-| 대기 등록 | 잔여 좌석이 없을 경우 대기 요청 |
-| 고객 도움 요청 | 직원 확인이 필요한 경우 별도 요청 |
-| 처리 상태 확인 | 예약·환불·대기 등 후속 처리 상태 확인 |
-| 공항 도착 안내 | 변경된 출발 시간을 기준으로 도착·체크인 안내 제공 |
-
----
-
-## 3. Service Flow
-
-```mermaid
-flowchart TD
-    A[예약번호 입력] --> B[기존 항공편 조회]
-    B --> C{지연·결항 확인}
-    C --> D[대체편 조회]
-    D --> E{사용자 선택}
-
-    E -->|재예약| F[대체편 예약 요청]
-    E -->|환불| G[환불 요청]
-    E -->|대기| H[대기 등록]
-    E -->|도움 요청| I[직원 지원 요청]
-
-    F --> J[처리 상태 저장]
-    G --> J
-    H --> J
-    I --> J
-
-    J --> K[사용자 처리 결과 확인]
-```
-
----
-
-## 4. Backend Architecture
+- **PostgreSQL:** 대체 항공편 및 예약 요청 상태 데이터 구조. `psycopg2` 조회 결과를 JSON으로 반환
+- **Redis:** `QUEUE_NAME=reservation_queue`, `DLQ_NAME=reservation_dlq` 이름을 구분. 현재 API는 요청 등록과 두 목록의 길이 조회를 지원
+- **Fallback:** `/alternatives`에서 DB 연결 실패 또는 데이터 부재 시 데모용 `FALLBACK_ALTERNATIVES` 사용. **실제 운항 정보가 아닙니다**
+- **Pydantic:** 예약 요청 필수 필드 형식 검증
+- **오류 처리:** Redis 등록 실패, 상태 조회 실패, DB 예약 목록 조회 실패를 HTTP 500으로 반환
 
 ```mermaid
 flowchart LR
-    U[Client / Web UI] --> A[FastAPI]
-
-    A --> R[Redis]
-    A --> P[PostgreSQL / AWS RDS]
-
-    P --> P1[alternative_flights]
-    P --> P2[reservations]
-
-    R --> Q[Reservation Queue]
-    R --> DQ[DLQ]
-
-    A --> S[예약·환불·대기·지원 처리]
-    S --> U
+  U[브라우저/요청] --> A[FastAPI]
+  A -->|대체편 조회| P[(PostgreSQL)]
+  P -.연결 오류/조회 결과 없음.-> F[모의 대체편 데이터]
+  A -->|예약 요청 등록| Q[(Redis reservation_queue)]
+  A -->|상태 조회| D[(Redis Queue/DLQ 길이)]
+  A -->|예약 목록| P
 ```
 
-현재 공개 코드에는 **FastAPI, Redis, PostgreSQL 연결 로직과 대체편·예약 테이블 초기화 구조**가 포함되어 있습니다.
+**미구현 범위:** 항공사 예약·환불 API 실제 호출, Queue 소비 Worker, 작업 재시도 정책, DLQ 자동 이관, 실시간 항공사 데이터 수집 및 최종 예약 확정.
 
----
+## 3. 웹 미리보기와 코드의 차이
 
-## 5. 데이터 구조
+- [정적 UI 시연](https://rlaqhfla0917-bit.github.io/skycare-disruption-api/) — `docs/index.html`, 가상 항공편과 브라우저 저장소 사용. 실제 API 서버 아님
+- [웹 시연 안내](docs/README.md)
+- 실제 API 테스트: 로컬에서 FastAPI 서버를 실행해 `http://127.0.0.1:8000/docs` 접근
+- [프로젝트 발표자료](presentation.pdf) · [시연 영상](skycare_demo.mp4)
 
-### alternative_flights
+## 4. 로컬 실행
 
-대체편 후보를 저장하는 테이블입니다.
-
-```text
-reservation_no
-flight_no
-departure_time
-arrival_time
-remaining_seats
-delay_hours
-```
-
-### reservations
-
-대체편 예약 요청과 처리 상태를 관리합니다.
-
-```text
-request_id
-flight_id
-passenger_name
-passenger_phone
-status
-created_at
-```
-
-대체편의 잔여 좌석은 0 미만이 되지 않도록 제약조건을 두어 잘못된 좌석 데이터가 저장되지 않도록 구성했습니다.
-
----
-
-## 6. Queue / Failure Handling
-
-예약 요청은 동시에 몰릴 수 있기 때문에 Redis 기반 Queue 구조를 고려했습니다.
-
-```text
-예약 요청
-   ↓
-Reservation Queue
-   ↓
-처리
-   ├─ 성공 → 예약 상태 반영
-   └─ 실패 → DLQ
-```
-
-환경변수로 Queue와 DLQ 이름을 분리해 관리하도록 구성했습니다.
-
-```text
-QUEUE_NAME=reservation_queue
-DLQ_NAME=reservation_dlq
-```
-
-이를 통해 정상 처리와 실패 요청을 분리할 수 있도록 설계했습니다.
-
----
-
-## 7. Fallback
-
-외부 데이터나 DB 연결이 항상 정상이라는 전제만 두지 않았습니다.
-
-대체편 데이터는 테스트 및 데모를 위해 fallback 데이터를 함께 제공하고, DB 초기화가 불가능한 경우 서비스 전체가 즉시 중단되지 않도록 예외 처리 구조를 두었습니다.
-
-이 구조를 통해 개발·데모 환경에서도 주요 사용자 흐름을 확인할 수 있도록 했습니다.
-
----
-
-## 8. Tech Stack
-
-| 영역 | 기술 |
-|---|---|
-| Backend | Python / FastAPI |
-| Validation | Pydantic |
-| Queue | Redis |
-| Database | PostgreSQL / psycopg2 |
-| Cloud DB | AWS RDS |
-| Deployment | AWS EC2 / Docker |
-| Frontend Demo | HTML / JavaScript / Tailwind CSS |
-| Configuration | Environment Variables |
-
----
-
-## 9. Repository Structure
-
-현재 공개 저장소는 핵심 구현과 데모 자료를 중심으로 구성되어 있습니다.
-
-```text
-skycare-disruption-api/
-├── main.py                 # FastAPI / Redis / PostgreSQL / Web Demo
-├── requirements.txt        # Python dependencies
-├── presentation.pdf        # 프로젝트 발표자료
-├── skycare_demo.mp4        # 서비스 데모
-├── .gitignore
-└── README.md
-```
-
-> 기존 저장소의 `main_py.txt`는 Python 코드이므로 GitHub 포트폴리오에서는 `main.py`로 변경하는 것을 권장합니다.
-
----
-
-## 10. Run
+Python 3.10 이상, Redis 서버와 PostgreSQL을 준비합니다. 외부 서비스가 없으면 일부 API는 오류 또는 모의 데이터로 응답할 수 있습니다.
 
 ```bash
 git clone https://github.com/rlaqhfla0917-bit/skycare-disruption-api.git
 cd skycare-disruption-api
-
 python -m venv .venv
-```
-
-Windows:
-
-```bash
-.venv\Scripts\activate
-```
-
-macOS / Linux:
-
-```bash
-source .venv/bin/activate
-```
-
-패키지 설치:
-
-```bash
+# Windows: .venv\\Scripts\\activate
+# macOS/Linux: source .venv/bin/activate
 pip install -r requirements.txt
+uvicorn main:app --reload
 ```
 
 환경변수 예시:
@@ -229,70 +77,21 @@ pip install -r requirements.txt
 ```env
 REDIS_HOST=localhost
 REDIS_PORT=6379
-
 QUEUE_NAME=reservation_queue
 DLQ_NAME=reservation_dlq
-
-DB_HOST=
+DB_HOST=localhost
 DB_NAME=postgres
 DB_USER=postgres
-DB_PASSWORD=
+DB_PASSWORD=your_local_password
 DB_PORT=5432
-
-AUTO_INIT_DB=true
 ```
 
-실행:
+> 비밀번호·API 키·개인정보를 커밋하지 마세요. 저장된 예시 데이터는 가상 정보로 취급합니다.
 
-```bash
-uvicorn main:app --reload
-```
+## 5. 검증 시나리오와 후속 과제
 
-브라우저에서:
+현재 소스에서 확인 가능한 검증 포인트는 `/health` 기본 응답, 대체편 DB 실패 시 폴백, Redis 요청 등록의 예외, Queue/DLQ 길이, 예약 목록 DB 실패 응답입니다. **자동 테스트 실행 성공은 별도 증빙이 없으므로 주장하지 않습니다.**
 
-```text
-http://127.0.0.1:8000
-```
+개선 과제: Worker·재시도·DLQ 이관 테스트, DB/Redis 통합 테스트, 요청 중복 방지, 실제 예약 확정 상태 관리.
 
----
-
-## 11. 프로젝트에서 고민한 점
-
-이 프로젝트에서 중요하게 본 것은 단순히 API Endpoint를 만드는 것이 아니라 **지연·결항 이후 고객이 실제로 수행해야 하는 후속 절차를 하나의 서비스 흐름으로 연결하는 것**이었습니다.
-
-특히 다음 세 가지를 중심으로 설계했습니다.
-
-1. **대체편 탐색부터 예약·환불까지 사용자 흐름 연결**
-2. **예약 상태와 잔여 좌석을 DB에서 관리**
-3. **예약 처리 실패를 정상 요청과 분리할 수 있도록 Queue / DLQ 구조 고려**
-
-이를 통해 고객이 항공편 상태를 확인한 뒤 다시 다른 채널을 찾지 않고, 필요한 후속 행동까지 이어갈 수 있는 Self-Service 구조를 구현했습니다.
-
----
-
-## 12. Project Role
-
-프로젝트에서 서비스 흐름과 장애 상황을 중심으로 구조를 설계했습니다.
-
-- 지연·결항 이후 고객 Journey 정의
-- 대체편 조회 → 예약 → 취소·환불 흐름 설계
-- FastAPI 기반 API 서비스 구현 참여
-- Redis Queue / DLQ 기반 비동기 처리 구조 설계
-- RDS 기반 예약·대체편 데이터 관리
-- 장애·실패 상황과 사용자 결과 확인 흐름 정의
-- AWS 환경에서의 배포 구조 설계
-
----
-
-## 13. What I Learned
-
-이 프로젝트를 통해 서비스가 실제로 사용되기 위해서는 정상 처리 흐름뿐 아니라 **요청이 몰리는 상황, 처리 실패, 데이터 연결 실패와 같은 예외 상황까지 함께 설계해야 한다**는 점을 배웠습니다.
-
-또한 API는 하나의 기능을 제공하는 데서 끝나는 것이 아니라, DB·Queue·Cloud 환경과 연결되어 **사용자가 처음 요청한 시점부터 최종 결과를 확인하는 시점까지 일관된 상태를 관리해야 한다**는 점을 경험했습니다.
-
----
-
-## Project Context
-
-KT AIVLE School  
-Flight Disruption Self-Service API / FastAPI / Redis / PostgreSQL / AWS
+**참고:** 이 코드는 프로젝트 시연·학습용 구현입니다. 실제 항공편 운항이나 결제에 사용하지 않습니다.
