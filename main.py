@@ -177,7 +177,7 @@ def home():
 
       <div class="hidden sm:flex items-center gap-2 px-3 py-1.5 rounded-full bg-emerald-50 border border-emerald-100 text-emerald-700 text-[11px] font-black">
         <span class="w-2 h-2 rounded-full bg-emerald-500 animate-pulse"></span>
-        실시간 처리 가능
+        가상 데이터 시연 중
       </div>
     </div>
   </header>
