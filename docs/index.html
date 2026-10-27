@@ -604,8 +604,15 @@ function submitWaitlist() {
   state.tab='status'; state.page='status'; state.statusSearched=true; render();
 }
 
+function matchesDemoIdentity(reservationNo, phoneLast4) {
+  return mockFlights.some(f =>
+    f.reservationNo.toUpperCase() === String(reservationNo).trim().toUpperCase() &&
+    f.phoneLast4 === String(phoneLast4).trim()
+  );
+}
+
 function renderStatus() {
-  const actions = state.statusSearched
+  const actions = state.statusSearched && matchesDemoIdentity(state.statusResNo, state.statusPhone)
     ? state.actions.filter(a => a.reservationNo.toUpperCase() === state.statusResNo.toUpperCase())
     : [];
 
