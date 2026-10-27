@@ -1,5 +1,6 @@
 import os
 import json
+import secrets
 import uuid
 from datetime import datetime
 from typing import Optional
@@ -7,7 +8,7 @@ from typing import Optional
 import redis
 import psycopg2
 from psycopg2.extras import RealDictCursor
-from fastapi import FastAPI, HTTPException
+from fastapi import Depends, FastAPI, Header, HTTPException
 from fastapi.responses import HTMLResponse
 from pydantic import BaseModel
 
@@ -756,8 +757,15 @@ function submitWaitlist() {
   state.tab='status'; state.page='status'; state.statusSearched=true; render();
 }
 
+function matchesDemoIdentity(reservationNo, phoneLast4) {
+  return mockFlights.some(f =>
+    f.reservationNo.toUpperCase() === String(reservationNo).trim().toUpperCase() &&
+    f.phoneLast4 === String(phoneLast4).trim()
+  );
+}
+
 function renderStatus() {
-  const actions = state.statusSearched
+  const actions = state.statusSearched && matchesDemoIdentity(state.statusResNo, state.statusPhone)
     ? state.actions.filter(a => a.reservationNo.toUpperCase() === state.statusResNo.toUpperCase())
     : [];
 
@@ -1122,7 +1130,13 @@ def queue_status():
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@app.get("/reservations")
+def require_admin_key(x_api_key: str | None = Header(default=None)):
+    configured_key = os.getenv("SKYCARE_ADMIN_API_KEY")
+    if not configured_key or not x_api_key or not secrets.compare_digest(x_api_key, configured_key):
+        raise HTTPException(status_code=403, detail="관리자 API 키가 필요합니다")
+
+
+@app.get("/reservations", dependencies=[Depends(require_admin_key)])
 def list_reservations():
     try:
         conn = get_db_connection()
