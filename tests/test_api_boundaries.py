@@ -58,6 +58,29 @@ class TestSkyCareAPI(unittest.TestCase):
                 main.list_reservations()
         self.assertEqual(caught.exception.status_code, 500)
 
+    def test_reservations_are_private_by_default(self):
+        with patch.dict(main.os.environ, {"SKYCARE_ADMIN_API_KEY": ""}):
+            for supplied_key in (None, "guess"):
+                with self.assertRaises(HTTPException) as caught:
+                    main.require_admin_key(supplied_key)
+                self.assertEqual(caught.exception.status_code, 403)
+
+    def test_reservations_require_matching_admin_key(self):
+        with patch.dict(main.os.environ, {"SKYCARE_ADMIN_API_KEY": "demo-test-secret"}):
+            with self.assertRaises(HTTPException) as caught:
+                main.require_admin_key("wrong")
+            self.assertEqual(caught.exception.status_code, 403)
+            self.assertIsNone(main.require_admin_key("demo-test-secret"))
+        route = next(route for route in main.app.routes if getattr(route, "path", "") == "/reservations")
+        self.assertTrue(any(dep.call is main.require_admin_key for dep in route.dependant.dependencies))
+
+    def test_both_demo_pages_require_phone_suffix_for_status_lookup(self):
+        from pathlib import Path
+        pages = [main.home(), (Path(main.__file__).parent / "docs" / "index.html").read_text(encoding="utf-8")]
+        for page in pages:
+            self.assertIn("matchesDemoIdentity(state.statusResNo, state.statusPhone)", page)
+            self.assertIn("f.phoneLast4 === String(phoneLast4).trim()", page)
+
 
 if __name__ == "__main__":
     unittest.main()
