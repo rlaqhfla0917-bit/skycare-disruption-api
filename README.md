@@ -98,9 +98,14 @@ DB_NAME=postgres
 DB_USER=postgres
 DB_PASSWORD=your_local_password
 DB_PORT=5432
+SKYCARE_ADMIN_API_KEY=replace_with_a_long_random_key
 ```
 
 > 비밀번호·API 키·개인정보를 커밋하지 마세요. 저장된 예시 데이터는 가상 정보로 취급합니다.
+
+`GET /reservations`는 승객 이름과 전화번호를 포함하므로 기본적으로 접근이 차단됩니다. 로컬 테스트에서 관리자 목록이 필요할 때만 `SKYCARE_ADMIN_API_KEY`를 설정하고 요청 헤더 `x-api-key`로 전달하세요. 이 키 검사는 데모용 보호 장치이며 실제 운영 환경에서는 사용자 인증·역할별 권한과 데이터 최소화가 별도로 필요합니다.
+
+정적 웹 데모의 처리 상태 조회는 예약번호와 휴대폰 뒤 4자리 모두 일치해야 결과를 표시합니다. 가상 데이터 검증일 뿐 실제 고객 인증 기능은 아닙니다.
 
 ## 5. 검증 시나리오와 후속 과제
 
