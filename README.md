@@ -7,16 +7,16 @@ KT AIVLE School에서 구상한 **지연·결항 확인 → 대체편 선택 →
 > **구현 범위 안내:** 이 저장소의 API는 실제 항공사 예약·취소·환불 시스템과 연동되지 않습니다. Redis Queue에 요청을 **등록**하지만 Worker의 자동 처리·DLQ 자동 이관·실제 항공권 발권은 공개 코드에 구현되어 있지 않습니다. 웹 미리보기는 가상 데이터를 사용하는 별도 정적 데모입니다.
 
 
-## Verification & Code Evidence
+## 코드 및 테스트
 
 **실제 구현과 검증 연결**
 - [`main.py`](main.py): 대체편 DB 조회·폴백, Redis `LPUSH` 요청 접수, Queue/DLQ `LLEN` 조회, 예약 목록 DB 조회
 - [`tests/test_api_boundaries.py`](tests/test_api_boundaries.py): 실제 DB·Redis 없이 모의 객체로 정상 접수, Redis 장애 HTTP 500, DB 연결 장애 시 폴백 및 오류 분기를 검사
 - [GitHub Actions](https://github.com/rlaqhfla0917-bit/skycare-disruption-api/actions/workflows/backend-tests.yml): `python -m unittest discover -s tests -v` 자동 실행 결과
 
-**검증 범위:** 모의 장애 기반 경계 테스트를 통과한 것이며 항공권 발권·실제 항공사 연동·DB/Redis 운영 환경의 통합 테스트는 완료했다는 의미가 아닙니다. `queued`는 **접수 상태이지 예약 확정이 아닙니다.**
+**테스트 범위:** DB·Redis를 모의 객체로 대체한 예외 처리 테스트입니다. 실제 항공사 연동과 운영 환경 통합 테스트는 별도로 필요합니다. `queued`는 예약 확정이 아닌 접수 상태입니다.
 
-**본인 기여:** 항공편 지연·결항 후속 사용자 흐름, FastAPI API 설계와 예외 처리 및 배포 아키텍처 검토에 참여했습니다. 실제 프로젝트 작업과 공개 저장소 포트폴리오 코드는 구분합니다.
+**담당 영역:** 항공편 지연·결항 후속 사용자 흐름, FastAPI API 설계, 예외 처리 및 배포 구조 검토에 참여했습니다. 공개 코드는 데모 범위에 맞춰 정리했습니다.
 
 ---
 
@@ -108,4 +108,4 @@ DB_PORT=5432
 
 개선 과제: Worker·재시도·DLQ 이관 테스트, DB/Redis 통합 테스트, 요청 중복 방지, 실제 예약 확정 상태 관리.
 
-**참고:** 이 코드는 프로젝트 시연·학습용 구현입니다. 실제 항공편 운항이나 결제에 사용하지 않습니다.
+이 API는 가상 데이터를 사용하는 데모이며 실제 예약·결제에 사용할 수 없습니다.
